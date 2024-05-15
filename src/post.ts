@@ -4,10 +4,6 @@ import yaml from "yaml";
 
 const IMAGE_REG = /!\[.*?\]\((.*?)\)/g;
 
-const SEP = "\n\n\n";
-const HEADER_START = "------";
-const HEADER_END = "------";
-
 export interface PostOptions {
   file: string;
   globURL: string;
@@ -24,28 +20,33 @@ export interface Post extends PostHeader {
   paragraphs: string[];
 }
 
-function parseHeader(content: string): [PostHeader, string] {
-  const start = content.indexOf(HEADER_START);
-  const end = content.indexOf(HEADER_END, start + HEADER_START.length);
-  if (start === -1 || end === -1) {
-    throw new Error("Header not found");
-  }
-
-  const header = content.slice(start + HEADER_START.length, end).trim();
+function parseHeader(lines: string[]): PostHeader {
+  const header = lines.map(it => it.substring(2)).join("\n");
   const head = yaml.parse(header);
   if (!head.title || !head.date) {
     throw new Error("Title and date are required");
   }
-  const body = content.slice(end + HEADER_END.length).trim();
 
-  return [
-    {
-      title: head.title,
-      date: head.date,
-      tags: head.tags ?? []
-    },
-    body
-  ];
+  return {
+    title: head.title,
+    date: head.date,
+    tags: head.tags ?? []
+  };
+}
+
+function parseBody(lines: string[]): string[] {
+  const paragraphs: string[] = [];
+  let current: string[] = [];
+  for (const line of lines.map(it => it.trim())) {
+    if (line.startsWith("# ") || line.startsWith("## ")) {
+      paragraphs.push(current.join("\n"));
+      current = [];
+    }
+    current.push(line);
+  }
+  paragraphs.push(current.join("\n"));
+
+  return paragraphs.map(it => it.trim()).filter(it => it.length > 0);
 }
 
 function replaceImage(
@@ -70,9 +71,17 @@ export async function createPost({
   const content = await handle
     .readFile({ encoding: "utf8" })
     .then(it => replaceImage(it, globURL, assetsPrefix));
-  const [header, body] = parseHeader(content);
+
+  const lines = content.split("\n");
+  const sep = lines.findIndex(it => !it.startsWith("> "));
+  if (sep === -1) {
+    throw new Error("Header and body are required");
+  }
+
+  const header = parseHeader(lines.slice(0, sep));
+  const paragraphs = parseBody(lines.slice(sep));
   return {
     ...header,
-    paragraphs: body.split(SEP).map(it => it.trim())
+    paragraphs
   };
 }
